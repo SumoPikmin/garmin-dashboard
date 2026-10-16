@@ -71,6 +71,7 @@ h3.section { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; 
 .grid { display: grid; gap: 14px; }
 .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .wide { grid-column: 1 / -1; }
+.records-row { margin-top: 14px; }
 .chart { position: relative; height: 240px; }
 .chart.tall { height: 290px; }
 .table-toggle.inline { float: none; margin-left: auto; }
