@@ -1,0 +1,78 @@
+name: Sync Garmin and publish
+
+on:
+  schedule:
+    - cron: "15 4,16 * * *" # ~06:15 and 18:15 in Germany
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the encrypted state branch
+  pages: write
+  id-token: write
+
+concurrency:
+  group: garmin-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch encrypted state
+        run: |
+          git fetch --depth=1 origin state
+          git show origin/state:state.enc > state.enc
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Decrypt state (database, Garmin token, settings)
+        env:
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+        run: python publish.py restore state.enc
+
+      - name: Sync Garmin
+        id: sync
+        continue-on-error: true # still save the (possibly refreshed) token and publish
+        run: python sync.py
+
+      - name: Save encrypted state
+        env:
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python publish.py save state.enc
+          mkdir -p "$RUNNER_TEMP/state" && cp state.enc "$RUNNER_TEMP/state/" && cd "$RUNNER_TEMP/state"
+          git init -q -b state
+          git add state.enc
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qm "state $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" state
+
+      - name: Build encrypted site
+        env:
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: python publish.py build site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Report sync failure
+        if: steps.sync.outcome == 'failure'
+        run: |
+          echo "::error::Garmin sync failed - the site was republished with the previous data. If the Garmin token expired, run 'python publish.py login-cloud' and 'python publish.py bundle' locally and push the state branch again."
+          exit 1

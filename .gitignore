@@ -1,0 +1,6 @@
+.venv/
+data/
+settings.json
+__pycache__/
+state.enc
+site/

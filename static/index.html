@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Garmin Dashboard</title>
+  <link rel="stylesheet" href="static/styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="lock" class="lock" hidden>
+  <form class="card lock-card" id="lock-form">
+    <h1>Training dashboard</h1>
+    <p class="sub">This dashboard is encrypted. Enter your password to unlock it. Decryption happens in this browser; the password is never sent anywhere.</p>
+    <input type="password" id="lock-pw" autocomplete="current-password" placeholder="Password" aria-label="Password" required>
+    <label class="remember"><input type="checkbox" id="lock-remember"> Remember on this device</label>
+    <button class="btn primary" type="submit" id="lock-btn">Unlock</button>
+    <p class="note" id="lock-msg" role="status"></p>
+  </form>
+</div>
+<div class="viz-root">
+  <header class="top">
+    <div>
+      <h1>Training dashboard</h1>
+      <p class="sub" id="meta">Loading…</p>
+    </div>
+    <div class="top-actions">
+      <span class="badge" id="demo-badge" hidden>Demo data</span>
+      <div class="seg" id="range" role="group" aria-label="Time range">
+        <button data-days="30">30d</button>
+        <button data-days="90">90d</button>
+        <button data-days="180" class="on">6m</button>
+        <button data-days="365">1y</button>
+      </div>
+      <button class="btn" id="theme" title="Toggle light/dark" aria-label="Toggle theme">◐</button>
+      <button class="btn primary" id="sync">Sync Garmin</button>
+    </div>
+  </header>
+  <div id="sync-log" class="sync-log" hidden></div>
+
+  <main id="app">
+    <section class="hero-row">
+      <article class="card hero" id="hero"></article>
+      <div class="tiles" id="tiles"></div>
+    </section>
+
+    <section class="card" id="goal-card" hidden></section>
+
+    <section class="grid two">
+      <article class="card">
+        <h2>Insights</h2>
+        <ul class="insights" id="insights"></ul>
+      </article>
+      <article class="card">
+        <h2>Race predictions</h2>
+        <p class="note" id="pred-basis"></p>
+        <div class="table-wrap"><table class="data" id="pred-table"></table></div>
+        <p class="note" id="pred-notes"></p>
+      </article>
+    </section>
+
+    <h3 class="section">Fitness</h3>
+    <section class="grid two">
+      <article class="card chart-card" data-chart="vo2">
+        <h2>VO2max</h2>
+        <p class="note">Garmin's value vs two independent estimates from your runs.</p>
+        <div class="chart"><canvas id="c-vo2"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="pred">
+        <div class="card-head">
+          <h2>Garmin race prediction trend</h2>
+          <div class="seg small" id="pred-race">
+            <button data-race="5K">5K</button><button data-race="10K">10K</button>
+            <button data-race="Half">Half</button><button data-race="Marathon" class="on">Marathon</button>
+          </div>
+        </div>
+        <div class="chart"><canvas id="c-pred"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="pmc">
+        <h2>Fitness &amp; fatigue</h2>
+        <p class="note">Banister model on HR-based TRIMP: fitness = 42-day load, fatigue = 7-day load.</p>
+        <div class="chart"><canvas id="c-pmc"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="tsb">
+        <h2>Form (fitness − fatigue)</h2>
+        <p class="note">Positive = fresh, −10 to −30 = productive training, below that = overreaching.</p>
+        <div class="chart"><canvas id="c-tsb"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="acwr">
+        <h2>Acute : chronic load ratio</h2>
+        <p class="note">7-day vs 28-day load. 0.8–1.3 is the low-injury-risk band.</p>
+        <div class="chart"><canvas id="c-acwr"></canvas></div>
+      </article>
+      <article class="card" id="garmin-card">
+        <h2>Garmin status</h2>
+        <div id="garmin-status"></div>
+      </article>
+    </section>
+
+    <h3 class="section">Training volume</h3>
+    <section class="grid two">
+      <article class="card chart-card wide" data-chart="weekly">
+        <div class="card-head">
+          <h2>Weekly volume</h2>
+          <div class="seg small" id="vol-unit">
+            <button data-unit="h" class="on">Hours by sport</button><button data-unit="km">Running km</button>
+          </div>
+        </div>
+        <div class="chart tall"><canvas id="c-weekly"></canvas></div>
+      </article>
+      <article class="card wide">
+        <div class="card-head">
+          <h2>Last 12 months</h2>
+          <div class="legend-seq" id="heat-legend"></div>
+        </div>
+        <div class="heatmap" id="heatmap"></div>
+        <div class="totals" id="totals"></div>
+      </article>
+      <article class="card">
+        <h2>Intensity distribution · 28 days</h2>
+        <p class="note" id="zones-note"></p>
+        <div class="zonebar" id="zonebar"></div>
+        <div id="zones-table"></div>
+      </article>
+      <article class="card chart-card" data-chart="ef">
+        <h2>Aerobic efficiency</h2>
+        <p class="note" id="ef-note">Metres per minute per heartbeat on steady runs ≥ 20 min. Higher = fitter.</p>
+        <div class="chart"><canvas id="c-ef"></canvas></div>
+      </article>
+    </section>
+
+    <h3 class="section">Recovery</h3>
+    <section class="grid two">
+      <article class="card chart-card" data-chart="hrv">
+        <h2>HRV (overnight)</h2>
+        <p class="note">Shaded band = Garmin's balanced baseline.</p>
+        <div class="chart"><canvas id="c-hrv"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="rhr">
+        <h2>Resting heart rate</h2>
+        <div class="chart"><canvas id="c-rhr"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="sleep">
+        <h2>Sleep</h2>
+        <p class="note" id="sleep-note"></p>
+        <div class="chart"><canvas id="c-sleep"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="ready">
+        <h2>Garmin training readiness</h2>
+        <div class="chart"><canvas id="c-ready"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="bb">
+        <h2>Body Battery</h2>
+        <p class="note">How high you recharge overnight vs how low you drain each day.</p>
+        <div class="chart"><canvas id="c-bb"></canvas></div>
+      </article>
+      <article class="card chart-card" data-chart="weight">
+        <h2 id="weight-title">Weight</h2>
+        <div class="chart"><canvas id="c-weight"></canvas></div>
+      </article>
+    </section>
+
+    <h3 class="section">Records &amp; activities</h3>
+    <section class="grid two">
+      <article class="card">
+        <h2>Personal records</h2>
+        <div id="records"></div>
+      </article>
+      <article class="card">
+        <h2>Best efforts from your runs</h2>
+        <p class="note">Fastest segments Garmin detected inside your activities.</p>
+        <div class="table-wrap"><table class="data" id="bests"></table></div>
+        <p class="note" id="records-extra"></p>
+      </article>
+      <article class="card wide">
+        <div class="card-head">
+          <h2>Recent activities</h2>
+          <div class="seg small" id="act-filter">
+            <button data-sport="" class="on">All</button><button data-sport="run">Run</button>
+            <button data-sport="bike">Bike</button><button data-sport="strength">Strength</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="data" id="activities"></table></div>
+      </article>
+    </section>
+    <p class="foot" id="foot"></p>
+  </main>
+</div>
+<div id="tip" class="tip" hidden></div>
+<script src="static/app.js"></script>
+</body>
+</html>

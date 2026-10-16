@@ -1,0 +1,3 @@
+garminconnect==0.3.19
+mcp[cli]==2.3.0
+cryptography>=42

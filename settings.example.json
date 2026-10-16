@@ -1,0 +1,13 @@
+{
+  "max_hr": null,
+  "resting_hr": null,
+  "sex": "male",
+  "sleep_goal_h": 8,
+  "history_days": 730,
+  "goal_race": {
+    "name": "Berlin Marathon",
+    "date": "2027-09-26",
+    "distance_km": 42.195,
+    "target_time": "3:15:00"
+  }
+}
