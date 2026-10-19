@@ -459,11 +459,12 @@ function renderAll() {
 const STATIC = !!window.GARMIN_STATIC;
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const keySlot = (blob) => `garmin-key:${blob.salt}`;
+let sessionKey = null; // the unlocked dashboard key; also seals the GitHub token
 
 async function deriveKey(password, blob) {
   const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt: b64(blob.salt), iterations: blob.iter },
-    base, { name: "AES-GCM", length: 256 }, true, ["decrypt"]);
+    base, { name: "AES-GCM", length: 256 }, true, ["decrypt", "encrypt"]);
 }
 
 async function decryptBlob(blob, key) {
@@ -475,7 +476,7 @@ async function decryptBlob(blob, key) {
 async function rememberedKey(blob) {
   try {
     const raw = localStorage.getItem(keySlot(blob));
-    return raw ? await crypto.subtle.importKey("raw", b64(raw), "AES-GCM", true, ["decrypt"]) : null;
+    return raw ? await crypto.subtle.importKey("raw", b64(raw), "AES-GCM", true, ["decrypt", "encrypt"]) : null;
   } catch (_) { return null; }
 }
 
@@ -496,7 +497,7 @@ async function loadStatic() {
   const blob = await (await fetch("data.enc", { cache: "no-store" })).json();
   const saved = await rememberedKey(blob);
   if (saved) {
-    try { return showDashboard(await decryptBlob(blob, saved)); } catch (_) { forgetKeys(); }
+    try { const d = await decryptBlob(blob, saved); sessionKey = saved; return showDashboard(d); } catch (_) { forgetKeys(); }
   }
   $("#lock").hidden = false;
   $("#lock-pw").focus();
@@ -512,6 +513,7 @@ async function loadStatic() {
         try { localStorage.setItem(keySlot(blob), btoa(String.fromCharCode(...raw))); } catch (_) {}
       }
       $("#lock-pw").value = "";
+      sessionKey = key;
       showDashboard(data);
     } catch (_) {
       $("#lock-msg").textContent = "Wrong password.";
@@ -560,7 +562,126 @@ try { const t = localStorage.getItem("garmin-theme"); if (t) document.documentEl
 if (STATIC) {
   $("#sync").textContent = "Lock";
   $("#sync").title = "Forget the saved key on this device and lock the dashboard";
+  $("#sync").classList.remove("primary");
+  $("#gh-sync").hidden = false;
 }
+
+// ---------------------------------------------------------------- hosted mode: sync now via GitHub Actions
+// The site is static, so "sync" means starting the workflow that pulls Garmin data and redeploys.
+// With a GitHub token saved on this device (encrypted with the dashboard key) it is one click;
+// without one, the panel links to the workflow page where you press "Run workflow".
+const GH_REPO = "SumoPikmin/garmin-dashboard", GH_WORKFLOW = "sync.yml";
+const GH_PAGE = `https://github.com/${GH_REPO}/actions/workflows/${GH_WORKFLOW}`;
+const TOKEN_SLOT = "garmin-gh-token";
+const ghPanel = $("#gh-panel"), ghBtn = $("#gh-sync");
+let ghPoll = null;
+
+async function sealToken(token) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, sessionKey, new TextEncoder().encode(token)));
+  const enc = (u) => btoa(String.fromCharCode(...u));
+  localStorage.setItem(TOKEN_SLOT, JSON.stringify({ iv: enc(iv), ct: enc(ct) }));
+}
+async function openToken() {
+  try {
+    const s = JSON.parse(localStorage.getItem(TOKEN_SLOT) || "null");
+    if (!s || !sessionKey) return null;
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(s.iv) }, sessionKey, b64(s.ct));
+    return new TextDecoder().decode(plain);
+  } catch (_) { return null; }
+}
+const gh = (token, path, opts = {}) => fetch(`https://api.github.com/repos/${GH_REPO}${path}`, {
+  ...opts, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...(opts.headers || {}) },
+});
+
+function panel(html) { ghPanel.hidden = false; ghPanel.innerHTML = html; }
+function closePanel() { ghPanel.hidden = true; ghPanel.innerHTML = ""; }
+
+function tokenForm(message) {
+  panel(`${message ? `<div class="err">${esc(message)}</div>` : ""}
+    <div><strong>Sync now</strong> starts the GitHub workflow that pulls your Garmin data and republishes this page. It takes about 2 minutes once GitHub picks it up.</div>
+    <div class="row"><a class="btn" href="${GH_PAGE}" target="_blank" rel="noopener">Run it on GitHub ↗</a><span>then press <em>Run workflow</em>.</span></div>
+    <div>For one-click sync, save a GitHub token on this device:</div>
+    <ol>
+      <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create a fine-grained token ↗</a></li>
+      <li>Repository access: <em>Only select repositories</em> → garmin-dashboard</li>
+      <li>Permissions → Repository → <em>Actions: Read and write</em></li>
+    </ol>
+    <form id="gh-form"><input type="password" id="gh-token" placeholder="github_pat_…" autocomplete="off" aria-label="GitHub token" required><button class="btn primary" type="submit">Save and sync</button><button class="btn" type="button" id="gh-cancel">Close</button></form>
+    <div class="note">The token is encrypted with your dashboard password and stays on this device. It can only start this repository's workflows.</div>`);
+  $("#gh-cancel").onclick = closePanel;
+  $("#gh-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const t = $("#gh-token").value.trim();
+    if (!t) return;
+    try { await sealToken(t); } catch (_) { return tokenForm("Could not save the token on this device."); }
+    startSync();
+  };
+}
+
+function since(t0) { const s = Math.round((Date.now() - t0) / 1000); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`; }
+
+async function refreshData() {
+  const blob = await (await fetch(`data.enc?t=${Date.now()}`, { cache: "no-store" })).json();
+  return decryptBlob(blob, sessionKey);
+}
+
+async function startSync() {
+  if (!STATIC) return;
+  if (!sessionKey) return tokenForm("Unlock the dashboard first.");
+  const token = await openToken();
+  if (!token) return tokenForm();
+  clearInterval(ghPoll);
+  const t0 = Date.now(), before = state.data?.meta?.generated_at;
+  ghBtn.disabled = true; ghBtn.textContent = "Syncing…";
+  panel(`<div><strong>Starting the sync…</strong></div>`);
+  const done = (html) => { clearInterval(ghPoll); ghBtn.disabled = false; ghBtn.textContent = "Sync now"; panel(html); };
+  let res;
+  try { res = await gh(token, `/actions/workflows/${GH_WORKFLOW}/dispatches`, { method: "POST", body: JSON.stringify({ ref: "main" }) }); }
+  catch (_) { return done(`<div class="err">GitHub could not be reached. Check your connection and try again.</div>`); }
+  if (res.status === 401 || res.status === 403 || res.status === 404) {
+    ghBtn.disabled = false; ghBtn.textContent = "Sync now";
+    return tokenForm(res.status === 401 ? "GitHub rejected the saved token (expired or revoked). Paste a new one." : "The saved token cannot start workflows here. It needs Actions: Read and write on garmin-dashboard.");
+  }
+  if (!res.ok) return done(`<div class="err">GitHub answered ${res.status}. <a href="${GH_PAGE}" target="_blank" rel="noopener">Run it on GitHub ↗</a></div>`);
+  let runUrl = GH_PAGE, finishing = false;
+  const tick = async () => {
+    if (finishing) return;
+    if (Date.now() - t0 > 30 * 60000) return done(`<div>Still not finished after 30 minutes. <a href="${runUrl}" target="_blank" rel="noopener">Check the run on GitHub ↗</a></div>`);
+    let run = null;
+    try {
+      const r = await (await gh(token, `/actions/workflows/${GH_WORKFLOW}/runs?event=workflow_dispatch&per_page=5`)).json();
+      run = (r.workflow_runs || []).find((x) => new Date(x.created_at).getTime() >= t0 - 60000) || null;
+    } catch (_) { /* keep polling */ }
+    if (run) runUrl = run.html_url;
+    const link = `<a href="${runUrl}" target="_blank" rel="noopener">view run ↗</a>`;
+    if (!run || run.status !== "completed") {
+      const what = !run ? "Waiting for GitHub to start the run" : run.status === "queued" ? "Queued at GitHub" : "Pulling Garmin data and publishing";
+      panel(`<div><strong>${what}…</strong> ${since(t0)} · ${link}</div><div class="note">You can keep using the dashboard; it reloads by itself when the run is done.</div>`);
+      return;
+    }
+    if (run.conclusion !== "success") return done(`<div class="err">The sync run ended with "${esc(run.conclusion || "unknown")}". ${link}</div>`);
+    finishing = true; clearInterval(ghPoll);
+    panel(`<div><strong>Run finished, loading the new data…</strong> ${link}</div>`);
+    // Pages can take a moment to serve the new file; retry until it is newer.
+    for (let i = 0; i < 8; i++) {
+      try {
+        const d = await refreshData();
+        const newer = d.meta?.generated_at !== before;
+        if (!before || newer || i === 7) {
+          showDashboard(d);
+          done(`<div class="row"><strong>Synced.</strong><span>${newer ? "Showing the latest Garmin data." : "The page did not change yet; reload in a minute."}</span><button class="btn" type="button" id="gh-ok">Close</button></div>`);
+          $("#gh-ok").onclick = closePanel;
+          return;
+        }
+      } catch (_) { /* retry */ }
+      await new Promise((r) => setTimeout(r, 8000));
+    }
+  };
+  tick();
+  ghPoll = setInterval(tick, 10000);
+}
+ghBtn.addEventListener("click", startSync);
 
 $("#sync").addEventListener("click", async () => {
   if (STATIC) { forgetKeys(); location.reload(); return; }

@@ -63,6 +63,14 @@ h3.section { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; 
 .seg button.on { color: var(--ink); font-weight: 600; background: var(--wash); }
 .seg.small button { padding: 3px 9px; font-size: 12px; }
 .badge { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--wash); color: var(--ink-2); border: 1px solid var(--border); }
+.sync-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; color: var(--ink-2); font-size: 13px; line-height: 1.5; display: grid; gap: 8px; }
+.sync-panel strong { color: var(--ink); }
+.sync-panel a { color: inherit; }
+.sync-panel ol { margin: 0; padding-left: 20px; }
+.sync-panel form { display: flex; gap: 8px; flex-wrap: wrap; }
+.sync-panel input { flex: 1 1 240px; min-width: 0; font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--wash); color: var(--ink); }
+.sync-panel .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sync-panel .err { color: #c0392b; }
 .sync-log { font: 12px/1.5 ui-monospace, Consolas, monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; white-space: pre-wrap; color: var(--ink-2); }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; min-width: 0; }
